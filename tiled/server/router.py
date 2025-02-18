@@ -10,7 +10,7 @@ from typing import Any, List, Optional
 
 import anyio
 import packaging
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Security
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Security, WebSocket
 from jmespath.exceptions import JMESPathError
 from json_merge_patch import merge as apply_merge_patch
 from jsonpatch import apply_patch as apply_json_patch
@@ -704,6 +704,60 @@ async def post_table_full(
         settings=settings,
     )
 
+async def websocket_accept(websocket, mimetypes, subprotocols):
+
+    requested_subprotocols = websocket.headers.get("sec-websocket-protocol").split(", ")
+    requested_mimetypes = websocket.headers.get("accept", "*/*").split(", ")
+    print("HEADER", websocket.headers)
+    if intersect := [item for item in requested_mimetypes if item in mimetypes]:
+        mimetype = intersect[0]
+    else:
+        await websocket.close(code=status.WS_1003_UNSUPPORTED_DATA)
+        return
+
+    if intersect := [ item for item in requested_subprotocols if item in subprotocols]:
+        subprotocol = intersect[0]
+    else:
+        await websocket.close(code=status.WS_1002_PROTOCOL_ERROR)
+        return
+
+    await websocket.accept(subprotocol=bytes(subprotocol, 'utf-8'), headers=[(b'content-type', bytes(mimetype, 'utf-8'))])
+    return mimetype, subprotocol
+
+
+@router.websocket("/notify/{path:path}")
+async def notify(path: str, websocket: WebSocket):
+    """
+    Websocket endpoint to receive notifications about new data.
+
+    Parameters
+    ----------
+    path : str
+        The catalog path.
+    websocket : WebSocket
+        The websocket connection.
+    """
+    subprotocols = ["v1"]
+    mimetypes = ["*/*", "application/json"]
+
+    mimetype, subprotocol = await websocket_accept(websocket, mimetypes, subprotocols)
+
+    # Take a connection from the pool.
+    #async with app.pool.acquire() as connection:
+
+    #     async def callback(conn, pid, channel, payload):
+    #         if subprotocol == "v1":
+    #             await websocket.send_json({})
+    #         elif subprotocol == "v2":
+    #             await websocket.send_json({"version": "v2"})
+
+    #     await connection.add_listener(f"{path_hash(path)}", callback)
+
+    #     while True:
+    #         await asyncio.sleep(1)
+    while True:
+        await websocket.send_json({"message": "notify"})
+        await anyio.sleep(3)
 
 async def table_full(
     request: Request,
